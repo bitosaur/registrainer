@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  registrainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8050:8000"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - registrainer-network
+    restart: unless-stopped
+
+networks:
+  registrainer-network:
+    driver: bridge
