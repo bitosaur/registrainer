@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from urllib.parse import urlparse, urlunparse, unquote
 import logging
 import uuid
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
@@ -82,9 +83,10 @@ def save_config(registries: List[Registry]):
 
 # Get registry auth headers
 def get_auth_headers(registry: Registry, password: Optional[str] = None) -> Dict:
+    headers = {}
     if registry.username and password:
-        return {"Authorization": f"Basic {requests.auth._basic_auth_str(registry.username, password)}"}
-    return {}
+        headers["Authorization"] = f"Basic {requests.auth._basic_auth_str(registry.username, password)}"
+    return headers
 
 # API Endpoints
 @app.get("/", response_class=HTMLResponse)
@@ -212,22 +214,39 @@ async def list_tags(registry_url: str, repository: str):
         has_valid_tags = False
         for tag in tags:
             manifest_url = f"{registry.url}/v2/{repository}/manifests/{tag}"
-            headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json"
-            try:
-                manifest_response = requests.get(manifest_url, headers=headers, verify=not registry.insecure, timeout=10)
-                manifest_response.raise_for_status()
-                digest = manifest_response.headers.get("Docker-Content-Digest", "N/A")
-                status = "Valid"
-                can_delete = False
-                has_valid_tags = True
-            except requests.HTTPError as e:
-                if e.response.status_code == 404:
-                    logger.error(f"Invalid tag detected: {registry_url}/{repository}:{tag} has no manifest")
-                    digest = "Manifest missing"
-                    status = "Invalid"
-                    can_delete = True
-                    invalid_tags.append(tag)
-                else:
+            headers = get_auth_headers(registry, password)
+            headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json"
+            digest = "N/A"
+            status = "Valid"
+            can_delete = False
+            for attempt in range(2):  # Retry once
+                try:
+                    logger.debug(f"Fetching manifest for {registry_url}/{repository}:{tag} with Accept: {headers['Accept']}")
+                    manifest_response = requests.get(manifest_url, headers=headers, verify=not registry.insecure, timeout=10)
+                    manifest_response.raise_for_status()
+                    digest = manifest_response.headers.get("Docker-Content-Digest", "N/A")
+                    logger.debug(f"Manifest response headers: {manifest_response.headers}")
+                    has_valid_tags = True
+                    break
+                except requests.HTTPError as e:
+                    if e.response.status_code == 404:
+                        logger.error(f"Invalid tag detected: {registry_url}/{repository}:{tag} has no manifest on attempt {attempt + 1}")
+                        digest = "Manifest missing"
+                        status = "Invalid"
+                        can_delete = True
+                        invalid_tags.append(tag)
+                        break
+                    else:
+                        logger.warning(f"HTTP error fetching manifest for {registry_url}/{repository}:{tag}: {str(e)}")
+                        if attempt == 0:
+                            time.sleep(1)  # Wait before retry
+                            continue
+                        raise
+                except requests.RequestException as e:
+                    logger.warning(f"Request error fetching manifest for {registry_url}/{repository}:{tag}: {str(e)}")
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue
                     raise
             tag_details.append({
                 "tag": tag,
@@ -242,7 +261,7 @@ async def list_tags(registry_url: str, repository: str):
             "has_valid_tags": has_valid_tags
         }
         if invalid_tags:
-            response_data["warnings"] = f"Stale tags found for {repository}: {', '.join(invalid_tags)}. Delete stale tags or re-push missing images to the registry."
+            response_data["warnings"] = f"Stale tags found for {repository}: {', '.join(invalid_tags)}. Try re-pushing the image or running garbage collection on the registry."
         if not tag_details:
             logger.warning(f"No tags found for {registry_url}/{repository}")
         return response_data
@@ -273,7 +292,7 @@ async def delete_image(registry_url: str, repository: str, delete_request: Delet
         # Get the digest for the tag
         manifest_url = f"{registry.url}/v2/{repository}/manifests/{delete_request.tag}"
         headers = get_auth_headers(registry, password)
-        headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json"
+        headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json"
         manifest_response = requests.get(manifest_url, headers=headers, verify=not registry.insecure, timeout=10)
         manifest_response.raise_for_status()
         digest = manifest_response.headers.get("Docker-Content-Digest")
@@ -292,7 +311,12 @@ async def delete_image(registry_url: str, repository: str, delete_request: Delet
         raise HTTPException(status_code=503, detail=f"Failed to connect to registry {registry_url}: {str(e)}")
     except requests.HTTPError as e:
         logger.error(f"HTTP error deleting image {registry_url}/{repository}:{delete_request.tag}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=response.status_code, detail=f"Registry error for {registry_url}/{repository}: {str(e)}")
+        if e.response.status_code == 405:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image deletion is not supported by the registry {registry_url}. Enable REGISTRY_STORAGE_DELETE_ENABLED in the registry configuration."
+            )
+        raise HTTPException(status_code=delete_response.status_code, detail=f"Registry error for {registry_url}/{repository}: {str(e)}")
     except requests.RequestException as e:
         logger.error(f"Request error deleting image {registry_url}/{repository}:{delete_request.tag}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete image {registry_url}/{repository}: {str(e)}")
@@ -319,7 +343,7 @@ async def delete_tag(registry_url: str, repository: str, tag: str):
         
         # Attempt to get the manifest to confirm it's missing
         manifest_url = f"{registry.url}/v2/{repository}/manifests/{tag}"
-        headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json"
+        headers["Accept"] = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json"
         manifest_response = requests.get(manifest_url, headers=headers, verify=not registry.insecure, timeout=10)
         if manifest_response.status_code == 404:
             logger.warning(f"Manifest missing for {registry_url}/{repository}:{tag}, cannot delete via standard API")
@@ -341,7 +365,12 @@ async def delete_tag(registry_url: str, repository: str, tag: str):
         raise HTTPException(status_code=503, detail=f"Failed to connect to registry {registry_url}: {str(e)}")
     except requests.HTTPError as e:
         logger.error(f"HTTP error deleting tag {registry_url}/{repository}:{tag}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=response.status_code, detail=f"Registry error for {registry_url}/{repository}: {str(e)}")
+        if delete_response.status_code == 405:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tag deletion is not supported by the registry {registry_url}. Enable REGISTRY_STORAGE_DELETE_ENABLED in the registry configuration."
+            )
+        raise HTTPException(status_code=delete_response.status_code, detail=f"Registry error for {registry_url}/{repository}: {str(e)}")
     except requests.RequestException as e:
         logger.error(f"Request error deleting tag {registry_url}/{repository}:{tag}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete tag {registry_url}/{repository}: {str(e)}")
