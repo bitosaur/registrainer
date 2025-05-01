@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registrainer</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Favicon -->
+    <link rel="icon" href="/static/favicon.ico">
+    <style>
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+        .logo {
+            width: 4.5rem;
+            height: 4.5rem;
+            position: absolute;
+            right: 0;
+            top: 0;
+        }
+        .logo.bounce {
+            animation: bounce 0.5s ease-in-out 2;
+        }
+        .logo.rotate {
+            animation: rotate 1s linear 1;
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container my-4">
+        <div class="header-container">
+            <h1 class="display-4 mb-4">Registrainer</h1>
+            <img src="/static/logo.png" alt="Registrainer Logo" class="logo">
+        </div>
+        
+        <!-- Registry Management -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="card-title h5">Manage Registries</h2>
+                <div class="row g-2 mb-2 align-items-end">
+                    <div class="col-md-6 col-12">
+                        <input id="registryUrl" type="text" class="form-control" placeholder="Registry URL (e.g., http://localhost:5000)">
+                    </div>
+                    <div class="col-md-3 col-12">
+                        <input id="username" type="text" class="form-control" placeholder="Username (optional)">
+                    </div>
+                    <div class="col-md-2 col-12">
+                        <div class="form-check mt-2">
+                            <input id="insecure" type="checkbox" class="form-check-input">
+                            <label class="form-check-label" for="insecure">Insecure</label>
+                        </div>
+                    </div>
+                    <div class="col-md-1 col-12">
+                        <button onclick="addRegistry()" class="btn btn-primary w-100">Add</button>
+                    </div>
+                </div>
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-10 col-12">
+                        <select id="registrySelect" onchange="loadRepositories()" class="form-select">
+                            <option value="">Select a registry</option>
+                        </select>
+                    </div>
+                    <div class="col-md-1 col-12">
+                        <button onclick="refreshRepositories()" class="btn btn-info w-100">Refresh</button>
+                    </div>
+                    <div class="col-md-1 col-12">
+                        <button id="removeRegistryButton" onclick="removeRegistry()" class="btn btn-danger w-100" disabled>Remove</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Success Message -->
+        <div id="successMessage" class="alert alert-success alert-dismissible d-none" role="alert">
+            <span id="successText"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        
+        <!-- Error Message -->
+        <div id="errorMessage" class="alert alert-danger alert-dismissible d-none" role="alert">
+            <span id="errorText"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        
+        <!-- Password Modal -->
+        <div class="modal fade" id="passwordModal" tabindex="-1" aria-labelledby="passwordModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="passwordModalLabel">Enter Password</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input id="passwordInput" type="password" class="form-control" placeholder="Password">
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="cancelAuth()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="submitPassword()">Submit</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Confirmation Modal -->
+        <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="confirmModalLabel"></h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body" id="confirmModalBody"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-danger" id="confirmModalButton">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Repositories Grid -->
+        <div id="repositories" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4"></div>
+        
+        <!-- Partition -->
+        <hr class="my-4 border-2 border-secondary">
+        
+        <!-- Tags Section -->
+        <div id="tags" class="card d-none">
+            <div class="card-body">
+                <h2 id="tagsTitle" class="card-title h5"></h2>
+                <div id="noTagsMessage" class="alert alert-warning d-none" role="alert">
+                    No valid tags found for this repository.
+                </div>
+                <div id="warningsMessage" class="alert alert-danger alert-dismissible d-none" role="alert">
+                    <span id="warningsText"></span>
+                    <button type="button" class="btn btn-primary btn-sm ms-2" onclick="refreshTags()">Refresh Tags</button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th class="col-2">Tag</th>
+                            <th class="col-4">SHA</th>
+                            <th class="col-2">Status</th>
+                            <th class="col-4">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tagsList"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and Popper.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.min.js"></script>
+    <script>
+        let currentRegistry = null;
+        let currentRepository = null;
+        let registries = [];
+        const passwordModal = new bootstrap.Modal(document.getElementById('passwordModal'));
+        const confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+
+        // Initialize Bootstrap tooltips
+        function initializeTooltips() {
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            tooltipTriggerList.forEach(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+        }
+
+        // Clear page and show error
+        function showError(message) {
+            document.getElementById('repositories').innerHTML = '';
+            document.getElementById('tags').classList.add('d-none');
+            const errorMessage = document.getElementById('errorMessage');
+            if (errorMessage) {
+                errorMessage.querySelector('#errorText').textContent = message;
+                errorMessage.classList.remove('d-none');
+                document.getElementById('successMessage').classList.add('d-none');
+            } else {
+                console.error('Error: errorMessage element not found');
+            }
+        }
+
+        // Show success message
+        function showSuccess(message) {
+            const successMessage = document.getElementById('successMessage');
+            if (successMessage) {
+                successMessage.querySelector('#successText').textContent = message;
+                successMessage.classList.remove('d-none');
+                document.getElementById('errorMessage').classList.add('d-none');
+                setTimeout(() => {
+                    successMessage.classList.add('d-none');
+                }, 3000);
+            } else {
+                console.error('Error: successMessage element not found');
+            }
+        }
+
+        // Clear messages
+        function clearMessages() {
+            const errorMessage = document.getElementById('errorMessage');
+            const successMessage = document.getElementById('successMessage');
+            if (errorMessage) {
+                errorMessage.querySelector('#errorText').textContent = '';
+                errorMessage.classList.add('d-none');
+            }
+            if (successMessage) {
+                successMessage.querySelector('#successText').textContent = '';
+                successMessage.classList.add('d-none');
+            }
+        }
+
+        // Show confirmation modal
+        function showConfirmModal(title, message, action, data) {
+            document.getElementById('confirmModalLabel').textContent = title;
+            document.getElementById('confirmModalBody').textContent = message;
+            const confirmButton = document.getElementById('confirmModalButton');
+            confirmButton.onclick = () => {
+                action(data);
+                confirmModal.hide();
+            };
+            confirmModal.show();
+        }
+
+        // Load registries
+        async function loadRegistries() {
+            try {
+                const response = await fetch('/registries');
+                if (!response.ok) {
+                    throw new Error(`HTTP error: ${response.status}`);
+                }
+                registries = await response.json();
+                console.log('Loaded registries:', registries);
+                const select = document.getElementById('registrySelect');
+                select.innerHTML = '<option value="">Select a registry</option>';
+                if (!registries || registries.length === 0) {
+                    showError('No registries found in configuration');
+                    document.getElementById('removeRegistryButton').disabled = true;
+                    return;
+                }
+                registries.forEach(r => {
+                    if (r.uuid && r.url) {
+                        const option = document.createElement('option');
+                        option.value = `${r.uuid}|${r.url}`;
+                        option.textContent = `${r.url} (${r.username || 'No auth'})`;
+                        select.appendChild(option);
+                    } else {
+                        console.warn('Invalid registry data:', r);
+                    }
+                });
+                document.getElementById('removeRegistryButton').disabled = true;
+            } catch (e) {
+                console.error('Error loading registries:', e);
+                showError(`Failed to load registries: ${e.message.includes('Failed to fetch') ? 'Server is unreachable. Please ensure the server is running on localhost:8000.' : e.message}`);
+                document.getElementById('removeRegistryButton').disabled = true;
+            }
+        }
+
+        // Add registry
+        async function addRegistry() {
+            const url = document.getElementById('registryUrl').value;
+            const username = document.getElementById('username').value;
+            const insecure = document.getElementById('insecure').checked;
+            try {
+                const response = await fetch('/registries', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, username: username || null, insecure })
+                });
+                if (!response.ok) throw new Error((await response.json()).detail);
+                showSuccess('Registry added');
+                loadRegistries();
+            } catch (e) {
+                showError(`Error adding registry: ${e.message}`);
+            }
+        }
+
+        // Remove registry
+        async function removeRegistry() {
+            const select = document.getElementById('registrySelect');
+            const value = select.value;
+            if (!value) {
+                showError('Please select a registry to remove');
+                return;
+            }
+            const [uuid, url] = value.split('|');
+            if (!uuid || !url || !registries.some(r => r.uuid === uuid && r.url === url)) {
+                showError('Selected registry is not valid or not found in configuration');
+                return;
+            }
+            showConfirmModal(
+                'Confirm Remove Registry',
+                `Are you sure you want to remove the registry ${url}?`,
+                async () => {
+                    try {
+                        console.log(`Sending DELETE request to /registries/${uuid} for URL: ${url}`);
+                        const response = await fetch(`/registries/${uuid}`, { method: 'DELETE' });
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail || 'Failed to remove registry');
+                        }
+                        showSuccess('Registry removed');
+                        loadRegistries();
+                        document.getElementById('repositories').innerHTML = '';
+                        document.getElementById('tags').classList.add('d-none');
+                        clearMessages();
+                    } catch (e) {
+                        console.error(`Error removing registry: ${e.message}`);
+                        showError(`Failed to remove registry: ${e.message.includes('Failed to fetch') ? 'Server is unreachable. Please ensure the server is running on localhost:8000.' : e.message}`);
+                    }
+                },
+                null
+            );
+        }
+
+        // Authenticate
+        async function authenticate(url) {
+            passwordModal.show();
+            return new Promise((resolve, reject) => {
+                window.submitPassword = async () => {
+                    const password = document.getElementById('passwordInput').value;
+                    try {
+                        const response = await fetch(`/auth/${encodeURIComponent(url)}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password })
+                        });
+                        if (!response.ok) throw new Error((await response.json()).detail);
+                        passwordModal.hide();
+                        resolve();
+                    } catch (e) {
+                        showError(`Error authenticating: ${e.message}`);
+                        reject(e);
+                    }
+                };
+                window.cancelAuth = () => {
+                    passwordModal.hide();
+                    reject(new Error('Authentication cancelled'));
+                };
+            });
+        }
+
+        // Load repositories
+        async function loadRepositories() {
+            const select = document.getElementById('registrySelect');
+            const value = select.value;
+            document.getElementById('removeRegistryButton').disabled = !value;
+            if (!value) {
+                document.getElementById('repositories').innerHTML = '';
+                document.getElementById('tags').classList.add('d-none');
+                clearMessages();
+                return;
+            }
+            const [_, url] = value.split('|');
+            currentRegistry = url;
+            console.log(`Fetching repositories for URL: ${url}`);
+            try {
+                let response = await fetch(`/repositories/${url}`);
+                if (response.status === 401) {
+                    await authenticate(url);
+                    response = await fetch(`/repositories/${url}`);
+                }
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to fetch repositories');
+                }
+                const data = await response.json();
+                const reposDiv = document.getElementById('repositories');
+                reposDiv.innerHTML = '';
+                data.repositories.forEach(async repo => {
+                    // Fetch tags to determine if repository has valid tags
+                    const tagsResponse = await fetch(`/tags/${url}/${repo}`);
+                    const tagsData = await tagsResponse.json();
+                    const hasValidTags = tagsData.has_valid_tags || false;
+                    const card = document.createElement('div');
+                    card.className = 'col';
+                    card.innerHTML = `
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">${repo}</h5>
+                                <button class="btn btn-primary btn-sm me-2" onclick="loadTags('${url}', '${repo}')">View Tags</button>
+                                <button class="btn btn-danger btn-sm" ${hasValidTags ? 'disabled' : ''} onclick="confirmDeleteRepository('${url}', '${repo}')">Delete Repository</button>
+                            </div>
+                        </div>
+                    `;
+                    reposDiv.appendChild(card);
+                });
+                document.getElementById('tags').classList.add('d-none');
+                clearMessages();
+            } catch (e) {
+                showError(`Failed to load repositories for ${url}: ${e.message.includes('Failed to fetch') ? 'Server is unreachable. Please ensure the server is running on localhost:8000.' : e.message}`);
+            }
+        }
+
+        // Refresh repositories
+        async function refreshRepositories() {
+            if (!currentRegistry) return;
+            loadRepositories();
+        }
+
+        // Load tags
+        async function loadTags(url, repository) {
+            currentRegistry = url;
+            currentRepository = repository;
+            try {
+                const response = await fetch(`/tags/${url}/${repository}`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to fetch tags');
+                }
+                const data = await response.json();
+                const tagsDiv = document.getElementById('tags');
+                const tagsList = document.getElementById('tagsList');
+                const noTagsMessage = document.getElementById('noTagsMessage');
+                const warningsMessage = document.getElementById('warningsMessage');
+                const warningsText = document.getElementById('warningsText');
+                document.getElementById('tagsTitle').textContent = `Tags for ${repository}`;
+                tagsList.innerHTML = '';
+                if (data.tags.length === 0) {
+                    noTagsMessage.classList.remove('d-none');
+                    warningsMessage.classList.add('d-none');
+                } else {
+                    noTagsMessage.classList.add('d-none');
+                    if (data.warnings) {
+                        warningsText.textContent = data.warnings;
+                        warningsMessage.classList.remove('d-none');
+                    } else {
+                        warningsMessage.classList.add('d-none');
+                    }
+                    data.tags.forEach(tag => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${tag.tag}</td>
+                            <td><span data-bs-toggle="tooltip" data-bs-placement="top" title="${tag.sha}">${tag.sha.substring(0, 12)}...</span></td>
+                            <td><span class="badge ${tag.status === 'Valid' ? 'bg-success' : 'bg-danger'}">${tag.status}</span></td>
+                            <td>
+                                ${tag.status === 'Valid' ? `<button class="btn btn-danger btn-sm" onclick="confirmDelete('${tag.tag}')">Delete</button>` : ''}
+                                ${tag.can_delete ? `<button class="btn btn-warning btn-sm" onclick="confirmDeleteTag('${tag.tag}')">Delete Tag</button>` : ''}
+                            </td>
+                        `;
+                        tagsList.appendChild(tr);
+                    });
+                }
+                tagsDiv.classList.remove('d-none');
+                initializeTooltips();
+                clearMessages();
+            } catch (e) {
+                showError(`Failed to fetch tags for ${repository}: ${e.message.includes('Failed to fetch') ? 'Server is unreachable. Please ensure the server is running on localhost:8000.' : e.message}`);
+                document.getElementById('tags').classList.add('d-none');
+            }
+        }
+
+        // Refresh tags
+        async function refreshTags() {
+            if (!currentRegistry || !currentRepository) return showError('Select a repository first');
+            loadTags(currentRegistry, currentRepository);
+        }
+
+        // Confirm and delete image
+        async function confirmDelete(tag) {
+            showConfirmModal(
+                'Confirm Delete Image',
+                `Are you sure you want to delete ${currentRepository}:${tag}?`,
+                async () => {
+                    try {
+                        const response = await fetch(`/image/${currentRegistry}/${currentRepository}`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ repository: currentRepository, tag })
+                        });
+                        if (!response.ok) throw new Error((await response.json()).detail);
+                        showSuccess('Image deleted');
+                        loadTags(currentRegistry, currentRepository);
+                    } catch (e) {
+                        showError(`Error deleting image: ${e.message}`);
+                    }
+                },
+                tag
+            );
+        }
+
+        // Confirm and delete stale tag
+        async function confirmDeleteTag(tag) {
+            showConfirmModal(
+                'Confirm Delete Stale Tag',
+                `Are you sure you want to delete the stale tag ${currentRepository}:${tag}?`,
+                async () => {
+                    try {
+                        const response = await fetch(`/delete-tag/${currentRegistry}/${currentRepository}/${tag}`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail || 'Failed to delete tag');
+                        }
+                        showSuccess('Tag deleted');
+                        loadTags(currentRegistry, currentRepository);
+                    } catch (e) {
+                        showError(`Error deleting tag: ${e.message.includes('501') ? `${e.message}. Try running garbage collection manually on the registry.` : e.message}`);
+                    }
+                },
+                tag
+            );
+        }
+
+        // Confirm and delete repository
+        async function confirmDeleteRepository(url, repository) {
+            showConfirmModal(
+                'Confirm Delete Repository',
+                `Are you sure you want to delete the repository ${repository}?`,
+                async () => {
+                    try {
+                        const response = await fetch(`/delete-repository/${url}/${repository}`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail || 'Failed to delete repository');
+                        }
+                        showSuccess('Repository deleted');
+                        loadRepositories();
+                    } catch (e) {
+                        showError(`Error deleting repository: ${e.message}`);
+                    }
+                },
+                { url, repository }
+            );
+        }
+
+        // Animate logo
+        function animateLogo() {
+            const logo = document.querySelector('.logo');
+            if (!logo) return;
+            const animations = ['bounce', 'rotate'];
+            const randomAnimation = animations[Math.floor(Math.random() * animations.length)];
+            logo.classList.remove('bounce', 'rotate');
+            setTimeout(() => {
+                logo.classList.add(randomAnimation);
+                setTimeout(() => {
+                    logo.classList.remove(randomAnimation);
+                }, randomAnimation === 'bounce' ? 1000 : 1000);
+            }, 100);
+            // Schedule next animation (5-15 seconds)
+            setTimeout(animateLogo, 5000 + Math.random() * 10000);
+        }
+
+        // Initialize
+        loadRegistries();
+        animateLogo();
+    </script>
+</body>
+</html>
